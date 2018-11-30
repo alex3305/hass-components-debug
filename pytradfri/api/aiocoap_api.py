@@ -152,7 +152,7 @@ class APIFactory:
         api_command.result, code = _process_output(res, parse_json)
         if code == Code.CHANGED:
             self._changed_counter += 1
-            _LOGGER.warning('Observation failed... Failed: %d of %d',
+            _LOGGER.warning('Request failed... Failed: %d of %d',
                             self._changed_counter, MAX_CHANGED)
 
             if self._changed_counter >= MAX_CHANGED:
