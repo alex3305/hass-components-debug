@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import socket
+import time
 
 from aiocoap import Message, Context
 from aiocoap.error import RequestTimedOut, Error, ConstructionRenderableError
@@ -28,6 +29,7 @@ class PatchedDTLSSecurityStore:
 
 tinydtls.DTLSSecurityStore = PatchedDTLSSecurityStore
 MAX_CHANGED = 5  # can be lowered for testing. This is after 5 failed requests.
+SUCCESSFUL_TIME = 60
 
 class APIFactory:
     def __init__(self, host, psk_id='pytradfri', psk=None, loop=None):
@@ -38,6 +40,7 @@ class APIFactory:
         self._psk_id = psk_id
         self._loop = loop
         self._changed_counter = 0
+        self._last_successful_timer = time.time()
         self._observations = []
         self._observations_err_callbacks = []
         self._protocol = None
@@ -82,8 +85,10 @@ class APIFactory:
         await protocol.shutdown()
         self._protocol = None
         # Let any observers know the protocol has been shutdown.
-        for ob_error in self._observations_err_callbacks:
-            ob_error(exc)
+        for ob in self._observations:
+            ob[1].cancel()
+
+        self._observations.clear()
         self._observations_err_callbacks.clear()
 
     async def shutdown(self, exc=None):
@@ -150,20 +155,21 @@ class APIFactory:
         _, res = await self._get_response(msg)
 
         api_command.result, code = _process_output(res, parse_json)
-        if code == Code.CHANGED:
+        if code == Code.CHANGED and \
+                (time.time() - self._last_successful_timer) > SUCCESSFUL_TIME:
             self._changed_counter += 1
-            _LOGGER.warning('Request failed... Failed: %d of %d',
-                            self._changed_counter, MAX_CHANGED)
 
             if self._changed_counter >= MAX_CHANGED:
                 _LOGGER.error('Resetting observations...')
                 for ob in self._observations:
-                    ob.observe_reset()
+                    ob[0].observe_reset(ob[1])
 
                 self._changed_counter = 0
+                self._observations.clear()
                 self._observations_err_callbacks.clear()
         else:
             self._changed_counter = 0
+            self._last_successful_timer = time.time()
 
         return api_command.result
 
@@ -194,6 +200,7 @@ class APIFactory:
         def success_callback(res):
             api_command.result, _ = _process_output(res)
             self._changed_counter = 0
+            self._last_successful_timer = time.time()
 
         def error_callback(ex):
             err_callback(ex)
@@ -201,7 +208,8 @@ class APIFactory:
         ob = pr.observation
         ob.register_callback(success_callback)
         ob.register_errback(error_callback)
-        self._observations.append(api_command)
+
+        self._observations.append((api_command, ob))
         self._observations_err_callbacks.append(ob.error)
 
     async def generate_psk(self, security_key):

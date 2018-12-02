@@ -70,8 +70,10 @@ class Command(object):
 
         self._raw_result = value
 
-    def observe_reset(self):
+    def observe_reset(self, observation):
         print('Resetting observation...')
+
+        observation.cancel()
         self.err_callback(ObservationError())
 
     def url(self, host):

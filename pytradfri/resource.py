@@ -42,7 +42,9 @@ class ApiResource:
 
             Returns a Command.
             """
-            self.raw = value
+            if self.raw != value:
+                self.raw = value
+
             callback(self)
 
         return Command('get', self.path, process_result=observe_callback,
