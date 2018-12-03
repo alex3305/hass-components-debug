@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import socket
+import time
 
 from aiocoap import Message, Context
 from aiocoap.error import RequestTimedOut, Error, ConstructionRenderableError
@@ -28,6 +29,7 @@ class PatchedDTLSSecurityStore:
 
 tinydtls.DTLSSecurityStore = PatchedDTLSSecurityStore
 
+
 class APIFactory:
     def __init__(self, host, psk_id='pytradfri', psk=None, loop=None):
         self._psk = psk
@@ -36,6 +38,8 @@ class APIFactory:
         self._loop = loop
         self._observations = []
         self._protocol = None
+        self._resetting = False
+        self._last_response = time.time()
 
         if self._loop is None:
             self._loop = asyncio.get_event_loop()
@@ -143,7 +147,8 @@ class APIFactory:
 
         _, res = await self._get_response(msg)
 
-        api_command.result = _process_output(res, parse_json)
+        api_command.result, code = _process_output(res, parse_json)
+        self._loop.create_task(self._check_response(code))
 
         return api_command.result
 
@@ -169,10 +174,11 @@ class APIFactory:
         # Note that this is necessary to start observing
         pr, r = await self._get_response(msg)
 
-        api_command.result = _process_output(r)
+        api_command.result, _ = _process_output(r)
 
         def success_callback(res):
-            api_command.result = _process_output(res)
+            self._last_response = time.time()
+            api_command.result, _ = _process_output(res)
 
         def error_callback(ex):
             err_callback(ex)
@@ -181,6 +187,36 @@ class APIFactory:
         ob.register_callback(success_callback)
         ob.register_errback(error_callback)
         self._observations.append(ob)
+
+    def _check_response(self, code):
+        if self._resetting:
+            print('Already resetting observations')
+            return
+
+        # FIXME Sleep is currently ok, but I'm doubting this is the right way...
+        yield from asyncio.sleep(2, loop=self._loop)
+        current_time = time.time()
+        # TODO Debug printing for testing
+        print('Time:', current_time, '| last response:', self._last_response)
+
+        # When the response did not have any content and the last response was
+        # longer than 10 seconds ago, we will reset the observations.
+        if code == Code.CHANGED and self._last_response - current_time > 10:
+            print('Resetting observations...')
+
+            if self._resetting:
+                return
+
+            self._resetting = True
+
+            while self._observations:
+                ob = self._observations.pop()
+                ob.cancel()
+                del ob
+
+            print('Done resetting observations')
+            self._last_response = time.time()
+            self._resetting = False
 
     async def generate_psk(self, security_key):
         """Generate and set a psk from the security key."""
@@ -210,7 +246,7 @@ def _process_output(res, parse_json=True):
     _LOGGER.debug('Status: %s, Received: %s', res.code, output)
 
     if not output:
-        return None
+        return None, res.code
 
     if not res.code.is_successful:
         if 128 <= res.code < 160:
@@ -219,6 +255,6 @@ def _process_output(res, parse_json=True):
             raise ServerError(output)
 
     if not parse_json:
-        return output
+        return output, res.code
 
-    return json.loads(output)
+    return json.loads(output), res.code
