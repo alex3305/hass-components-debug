@@ -31,15 +31,17 @@ tinydtls.DTLSSecurityStore = PatchedDTLSSecurityStore
 
 
 class APIFactory:
+    last_changed = time.time()
+
     def __init__(self, host, psk_id='pytradfri', psk=None, loop=None):
         self._psk = psk
         self._host = host
         self._psk_id = psk_id
         self._loop = loop
+        self._is_checking = False
+        self._is_resetting = False
         self._observations = []
         self._protocol = None
-        self._resetting = False
-        self._last_response = time.time()
 
         if self._loop is None:
             self._loop = asyncio.get_event_loop()
@@ -81,8 +83,10 @@ class APIFactory:
         await protocol.shutdown()
         self._protocol = None
         # Let any observers know the protocol has been shutdown.
-        for ob in self._observations:
+        while self._observations:
+            ob = self._observations.pop()
             ob.cancel()
+            del ob
 
     async def shutdown(self, exc=None):
         """Shutdown the API events.
@@ -147,8 +151,8 @@ class APIFactory:
 
         _, res = await self._get_response(msg)
 
-        api_command.result, code = _process_output(res, parse_json)
-        self._loop.create_task(self._check_response(code))
+        api_command.result = _process_output(res, parse_json)
+        self._loop.create_task(self._check_observations())
 
         return api_command.result
 
@@ -174,11 +178,11 @@ class APIFactory:
         # Note that this is necessary to start observing
         pr, r = await self._get_response(msg)
 
-        api_command.result, _ = _process_output(r)
+        api_command.result = _process_output(r)
 
         def success_callback(res):
-            self._last_response = time.time()
-            api_command.result, _ = _process_output(res)
+            APIFactory.update_last_changed()
+            api_command.result = _process_output(res)
 
         def error_callback(ex):
             err_callback(ex)
@@ -188,35 +192,42 @@ class APIFactory:
         ob.register_errback(error_callback)
         self._observations.append(ob)
 
-    def _check_response(self, code):
-        if self._resetting:
-            print('Already resetting observations')
+    async def _check_observations(self):
+        # TODO 5 should be OBSERVATION_SLEEP_TIME or something
+        sleep_time = 5
+
+        if self._is_checking:
+            # FIXME debug logging
+            _LOGGER.warning("Already checking for observations...")
             return
 
-        # FIXME Sleep is currently ok, but I'm doubting this is the right way...
-        yield from asyncio.sleep(2, loop=self._loop)
+        self._is_checking = True
         current_time = time.time()
-        # TODO Debug printing for testing
-        print('Time:', current_time, '| last response:', self._last_response)
+        await asyncio.sleep(sleep_time, loop=self._loop)
 
-        # When the response did not have any content and the last response was
-        # longer than 10 seconds ago, we will reset the observations.
-        if code == Code.CHANGED and self._last_response - current_time > 10:
-            print('Resetting observations...')
+        # FIXME debug logging
+        _LOGGER.warning('Tradfri response_time %f',
+                        current_time - APIFactory.get_last_changed())
 
-            if self._resetting:
+        # TODO 10 should be OBSERVATION_TIMEOUT or something
+        if (current_time - APIFactory.get_last_changed()) > (10 + sleep_time):
+            _LOGGER.warning('Resetting Tradfri observations...')
+
+            if self._is_resetting:
                 return
 
-            self._resetting = True
+            self._is_resetting = True
 
             while self._observations:
                 ob = self._observations.pop()
-                ob.cancel()
+                # TODO should be ObservationTimeOutError or something
+                ob.error(None)
                 del ob
 
-            print('Done resetting observations')
-            self._last_response = time.time()
-            self._resetting = False
+            APIFactory.update_last_changed()
+            self._is_resetting = False
+
+        self._is_checking = False
 
     async def generate_psk(self, security_key):
         """Generate and set a psk from the security key."""
@@ -237,6 +248,16 @@ class APIFactory:
 
         return self._psk
 
+    @classmethod
+    def update_last_changed(cls):
+        # FIXME debug logging should be removed
+        _LOGGER.warning("Updating time...")
+        cls.last_changed = time.time()
+
+    @classmethod
+    def get_last_changed(cls):
+        return cls.last_changed
+
 
 def _process_output(res, parse_json=True):
     """Process output."""
@@ -246,7 +267,7 @@ def _process_output(res, parse_json=True):
     _LOGGER.debug('Status: %s, Received: %s', res.code, output)
 
     if not output:
-        return None, res.code
+        return None
 
     if not res.code.is_successful:
         if 128 <= res.code < 160:
@@ -255,6 +276,6 @@ def _process_output(res, parse_json=True):
             raise ServerError(output)
 
     if not parse_json:
-        return output, res.code
+        return output
 
-    return json.loads(output), res.code
+    return json.loads(output)
