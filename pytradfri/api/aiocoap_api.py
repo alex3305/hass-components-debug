@@ -10,6 +10,7 @@ from aiocoap.error import RequestTimedOut, Error, ConstructionRenderableError
 from aiocoap.numbers.codes import Code
 from aiocoap.transports import tinydtls
 
+from custom_components.pytradfri.const import OBSERVATION_SLEEP_TIME, OBSERVATION_TIMEOUT
 from ..error import ClientError, ServerError, RequestTimeout
 from ..gateway import Gateway
 
@@ -193,9 +194,6 @@ class APIFactory:
         self._observations.append(ob)
 
     async def _check_observations(self):
-        # TODO 5 should be OBSERVATION_SLEEP_TIME or something
-        sleep_time = 5
-
         if self._is_checking:
             # FIXME debug logging
             _LOGGER.warning("Already checking for observations...")
@@ -203,14 +201,14 @@ class APIFactory:
 
         self._is_checking = True
         current_time = time.time()
-        await asyncio.sleep(sleep_time, loop=self._loop)
+        await asyncio.sleep(OBSERVATION_SLEEP_TIME, loop=self._loop)
 
         # FIXME debug logging
         _LOGGER.warning('Tradfri response_time %f',
                         current_time - APIFactory.get_last_changed())
 
-        # TODO 10 should be OBSERVATION_TIMEOUT or something
-        if (current_time - APIFactory.get_last_changed()) > (10 + sleep_time):
+        if (current_time - APIFactory.get_last_changed()) > \
+                (OBSERVATION_TIMEOUT + OBSERVATION_SLEEP_TIME):
             _LOGGER.warning('Resetting Tradfri observations...')
 
             if self._is_resetting:
@@ -220,9 +218,13 @@ class APIFactory:
 
             while self._observations:
                 ob = self._observations.pop()
-                # TODO should be ObservationTimeOutError or something
+                # FIXME This is a workaround, because observation cancellation
+                #       will not restart observations. In the long term, this
+                #       can cause a stack overflow.
                 ob.error(None)
                 del ob
+
+            print(len(self._observations))
 
             APIFactory.update_last_changed()
             self._is_resetting = False
