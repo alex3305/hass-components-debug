@@ -308,7 +308,8 @@ class LightControl:
 
         commands = {}
         for k, v in values.items():
-            if k in self.raw[0] and self.raw[0][k] != v:
+            if k not in self.raw[0] or \
+                    (k in self.raw[0] and self.raw[0][k] != v):
                 commands[k] = v
 
         return commands
@@ -451,7 +452,8 @@ class SocketControl:
 
         commands = {}
         for k, v in values.items():
-            if k in self.raw[0] and self.raw[0][k] != v:
+            if k not in self.raw[0] or \
+                    (k in self.raw[0] and self.raw[0][k] != v):
                 commands[k] = v
 
         return commands
