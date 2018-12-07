@@ -159,6 +159,9 @@ class APIFactory:
 
     async def request(self, api_commands):
         """Make a request."""
+        if not api_commands:
+            return None
+
         if not isinstance(api_commands, list):
             result = await self._execute(api_commands)
             return result
@@ -195,7 +198,6 @@ class APIFactory:
 
     async def _check_observations(self):
         if self._is_checking:
-            # FIXME debug logging
             _LOGGER.warning("Already checking for observations...")
             return
 
