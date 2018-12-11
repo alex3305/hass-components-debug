@@ -198,16 +198,12 @@ class APIFactory:
 
     async def _check_observations(self):
         if self._is_checking:
-            _LOGGER.warning("Already checking for observations...")
+            _LOGGER.debug("Already checking for observations...")
             return
 
         self._is_checking = True
         current_time = time.time()
         await asyncio.sleep(OBSERVATION_SLEEP_TIME, loop=self._loop)
-
-        # FIXME debug logging
-        _LOGGER.warning('Tradfri response_time %f',
-                        current_time - APIFactory.get_last_changed())
 
         if (current_time - APIFactory.get_last_changed()) > \
                 (OBSERVATION_TIMEOUT + OBSERVATION_SLEEP_TIME):
@@ -225,8 +221,6 @@ class APIFactory:
                 #       can cause a stack overflow.
                 ob.error(None)
                 del ob
-
-            print(len(self._observations))
 
             APIFactory.update_last_changed()
             self._is_resetting = False
@@ -254,8 +248,6 @@ class APIFactory:
 
     @classmethod
     def update_last_changed(cls):
-        # FIXME debug logging should be removed
-        _LOGGER.warning("Updating time...")
         cls.last_changed = time.time()
 
     @classmethod
