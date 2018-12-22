@@ -10,7 +10,7 @@ from aiocoap.error import RequestTimedOut, Error, ConstructionRenderableError
 from aiocoap.numbers.codes import Code
 from aiocoap.transports import tinydtls
 
-from custom_components.pytradfri.const import OBSERVATION_SLEEP_TIME, OBSERVATION_TIMEOUT
+from ..const import OBSERVATION_SLEEP_TIME, OBSERVATION_TIMEOUT
 from ..error import ClientError, ServerError, RequestTimeout
 from ..gateway import Gateway
 
@@ -147,6 +147,8 @@ class APIFactory:
             api_method = Code.FETCH
         elif method == 'patch':
             api_method = Code.PATCH
+        elif method is None:
+            return
 
         msg = Message(code=api_method, uri=url, **kwargs)
 
@@ -185,8 +187,8 @@ class APIFactory:
         api_command.result = _process_output(r)
 
         def success_callback(res):
-            APIFactory.update_last_changed()
             api_command.result = _process_output(res)
+            APIFactory.update_last_changed()
 
         def error_callback(ex):
             err_callback(ex)
@@ -198,16 +200,12 @@ class APIFactory:
 
     async def _check_observations(self):
         if self._is_checking:
-            _LOGGER.warning("Already checking for observations...")
+            _LOGGER.debug("Already checking for observations...")
             return
 
         self._is_checking = True
         current_time = time.time()
         await asyncio.sleep(OBSERVATION_SLEEP_TIME, loop=self._loop)
-
-        # FIXME debug logging
-        _LOGGER.warning('Tradfri response_time %f',
-                        current_time - APIFactory.get_last_changed())
 
         if (current_time - APIFactory.get_last_changed()) > \
                 (OBSERVATION_TIMEOUT + OBSERVATION_SLEEP_TIME):
@@ -225,8 +223,6 @@ class APIFactory:
                 #       can cause a stack overflow.
                 ob.error(None)
                 del ob
-
-            print(len(self._observations))
 
             APIFactory.update_last_changed()
             self._is_resetting = False
@@ -254,8 +250,6 @@ class APIFactory:
 
     @classmethod
     def update_last_changed(cls):
-        # FIXME debug logging should be removed
-        _LOGGER.warning("Updating time...")
         cls.last_changed = time.time()
 
     @classmethod
