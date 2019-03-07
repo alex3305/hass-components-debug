@@ -218,10 +218,9 @@ class APIFactory:
 
             while self._observations:
                 ob = self._observations.pop()
-                # FIXME This is a workaround, because observation cancellation
-                #       will not restart observations. In the long term, this
-                #       can cause a stack overflow.
-                ob.error(None)
+                for c in ob.errbacks:
+                    c(None)
+                ob.cancel()
                 del ob
 
             APIFactory.update_last_changed()
